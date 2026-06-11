@@ -2,211 +2,175 @@
 
 Convert any web article to EPUB — with all images — and save it to Google Drive, ready to read on your Kobo e-reader.
 
-Works from your iPhone via:
-- **iOS Share Sheet** — tap Share → "Send to Kobo" while browsing any article in Safari (or any other app)
-- **Safari bookmarklet** — a tappable bookmark in Safari's toolbar
-- **Web UI** — a simple form if you prefer typing a URL
-- **CLI** — `python send_to_kobo.py URL` from the terminal
+Trigger it from your iPhone or iPad via the **iOS Share Sheet** (tap Share → "Send to Kobo" in any app) or a **Safari bookmarklet**. The server runs in the cloud so it works anywhere, not just at home.
 
 ---
 
 ## How it works
 
 ```
-iPhone (Share Sheet / bookmarklet)
-        │  HTTP POST /convert
-        ▼
-Flask server  ──►  fetch page  ──►  extract article  ──►  create EPUB  ──►  Google Drive
-(runs on your Mac/PC/Pi)
-                                                                                  │
-                                                                            Kobo syncs ◄──┘
+iPad / iPhone  ──  Share Sheet or bookmarklet
+                          │  HTTPS POST /convert
+                          ▼
+              Flask server on Render (free)
+                          │
+          fetch → extract → create EPUB → Google Drive
+                                                │
+                                         Kobo syncs ◄──┘
 ```
 
 ---
 
-## Setup
+## Setup overview
 
-### 1. Install Python dependencies
+1. Deploy the server to Render (free)
+2. Set up Google Drive credentials
+3. Sign in to Google Drive via your browser
+4. Install the iOS Shortcut or Safari bookmarklet
 
-```bash
-pip install -r requirements.txt
-```
+---
 
-Requires Python 3.8 or later.
+## Step 1 — Deploy to Render
 
-### 2. Set up Google Drive API credentials
+[Render](https://render.com) is a free cloud hosting service. Your server gets a permanent HTTPS URL like `https://send-to-kobo.onrender.com`.
 
-1. Go to the [Google Cloud Console](https://console.cloud.google.com/)
-2. Create or select a project
+1. **Fork this repository** to your own GitHub account (click Fork on GitHub)
+2. Go to [render.com](https://render.com) and create a free account
+3. Click **New → Web Service** → connect your GitHub account → select your forked repo
+4. Render will detect `render.yaml` automatically — click **Create Web Service**
+5. Wait ~2 minutes for the first deploy to finish
+
+Render auto-generates `SECRET_KEY` and `API_TOKEN` for you. **Copy the `API_TOKEN`** — you'll need it in your iOS Shortcut.
+
+To find it: Render dashboard → your service → **Environment** tab → reveal `API_TOKEN`.
+
+> **Free tier note:** The server sleeps after 15 minutes of inactivity and takes ~30 seconds to wake on the next request. For occasional use this is fine. Upgrade to Render's $7/month "Starter" plan if you want it always-on.
+
+---
+
+## Step 2 — Set up Google Drive credentials
+
+### Create a Google Cloud project
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com)
+2. Create a new project (or select an existing one)
 3. **APIs & Services → Library** → search **Google Drive API** → Enable
-4. **APIs & Services → Credentials → Create Credentials → OAuth client ID**
-5. Application type: **Desktop app** — give it any name → Create
-6. Click **Download JSON** → save as `credentials.json` in this directory
 
-> `credentials.json` is in `.gitignore` and will never be committed.
+### Create OAuth credentials
 
-### 3. Start the server
+1. **APIs & Services → Credentials → Create Credentials → OAuth client ID**
+2. If prompted to configure the consent screen first:
+   - User type: **External** → fill in app name (anything) → save
+3. Application type: **Web application**
+4. Name: anything (e.g. "Send to Kobo")
+5. Under **Authorized redirect URIs** → Add URI:
+   ```
+   https://YOUR-APP-NAME.onrender.com/auth/callback
+   ```
+   (replace `YOUR-APP-NAME` with your actual Render service name)
+6. Click **Create**
+7. Click **Download JSON** — this is your `credentials.json`
 
-```bash
-python app.py
-```
+### Add credentials to Render
 
-The server listens on port 5000 on all interfaces so your iPhone can reach it over Wi-Fi.
+Open the downloaded `credentials.json` in a text editor and copy its entire contents.
 
-### 4. Sign in to Google Drive (one-time, from the server machine)
+In Render: your service → **Environment** tab → find `GOOGLE_CREDENTIALS_JSON` → paste the JSON → **Save Changes**.
 
-Open **http://localhost:5000/auth** in a browser **on the same machine as the server**.  
-Complete the Google sign-in — the token is saved locally and reused from then on.
+### Set your Drive folder ID (optional but recommended)
 
-> If your server is headless (Raspberry Pi etc.), run `python send_to_kobo.py https://example.com` once from the terminal — it will open an auth URL you can visit from any browser.
-
-### 5. Set a default Google Drive folder (recommended)
-
-Find your Kobo folder in Google Drive. The **folder ID** is at the end of its URL:
+Find or create a folder in Google Drive for your Kobo books. The **folder ID** is the string at the end of its URL:
 
 ```
 https://drive.google.com/drive/folders/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms
                                         ────────────────────────────────────────────
-                                                      folder ID
+                                                      this is the folder ID
 ```
 
-```bash
-python send_to_kobo.py config --folder-id YOUR_FOLDER_ID
-```
+In Render: **Environment** → `DRIVE_FOLDER_ID` → paste the ID → **Save Changes**.
 
 ---
 
-## iPhone setup
+## Step 3 — Sign in to Google Drive
 
-First, find your server's local IP address (e.g. `192.168.1.42`):
-- **Mac:** System Settings → Wi-Fi → your network → IP address
-- **Linux/Pi:** `ip addr` or `hostname -I`
+Visit `https://YOUR-APP-NAME.onrender.com/auth` in any browser on any device.  
+Sign in with the Google account that owns the Drive folder. You only do this once — the token is stored on the server's persistent disk and refreshed automatically.
 
-Your server URL will be: `http://192.168.1.42:5000`
+---
+
+## Step 4 — Set up your iPhone / iPad
+
+Your server URL is: `https://YOUR-APP-NAME.onrender.com`  
+Your API token is: the `API_TOKEN` value from the Render Environment tab
 
 ---
 
 ### Option A — iOS Share Sheet (best experience)
 
-The shortcut appears in the Share Sheet of Safari and every other app. Tap Share → "Send to Kobo" and you're done.
+Appears in the Share Sheet of Safari and every other app. Tap Share → "Send to Kobo" on any article.
 
-**Steps (takes ~2 minutes):**
+**Steps (~3 minutes in the Shortcuts app):**
 
-1. Open the **Shortcuts** app on your iPhone
-2. Tap **+** (top right) to create a new shortcut
-3. Tap the shortcut name at the top → rename it to **"Send to Kobo"**
-4. Tap **Add Action** → search **"Get Contents of URL"** → select it
-5. Configure the action:
-   - Tap the URL field → type `http://192.168.1.42:5000/convert` (your server IP)
+1. Open the **Shortcuts** app → tap **+** to create a new shortcut
+2. Tap the name at the top → rename to **"Send to Kobo"**
+3. Tap **Add Action** → search **"Get Contents of URL"** → select it
+4. Configure the action:
+   - URL: `https://YOUR-APP-NAME.onrender.com/convert`
    - Tap **Show More**
    - Method: **POST**
    - Request Body: **JSON**
-   - Tap **Add new field** (text) → Key: `url` → Value: tap the field, then tap the variable icon and choose **Shortcut Input**
+   - Tap **Add new field** → Key: `url` → tap the value field → tap the variable icon → select **Shortcut Input**
+5. Add a header for authentication:
+   - Still in the same action, scroll to **Headers**
+   - Tap **Add new field** → Key: `Authorization` → Value: `Bearer YOUR_API_TOKEN`
 6. Tap **Add Action** → search **"Show Notification"** → select it
-   - Tap the message field → clear it → tap the variable icon → select the result of "Get Contents of URL"
-7. Tap the **ⓘ** (info) icon at the bottom → enable **"Show in Share Sheet"** → set input types to **URLs** and **Safari web pages**
+   - Clear the message field → tap the variable icon → select the result from "Get Contents of URL"
+7. Tap the **ⓘ** icon at the bottom → enable **Show in Share Sheet** → input types: **URLs** and **Safari web pages**
 8. Tap **Done**
 
-Now when you're reading an article in Safari: **Share → Send to Kobo** → a notification confirms it was sent to your Drive.
+Now: open any article in Safari → tap **Share** → **Send to Kobo** → get a notification when it's in your Drive.
 
 ---
 
 ### Option B — Safari bookmarklet
 
-A bookmark that sends the current page when tapped. Simpler to set up but lives in bookmarks, not the Share Sheet.
+A bookmark in Safari's toolbar that sends the current page when tapped.
 
-1. In Safari on your iPhone, bookmark any page (tap Share → Add Bookmark)
-2. Open **Bookmarks** → find the bookmark you just made → tap **Edit**
-3. Change the **name** to `Send to Kobo`
-4. Replace the **URL** with this (change the IP to your server's):
+1. In Safari, bookmark any page (Share → Add Bookmark)
+2. Open Bookmarks → find it → tap **Edit**
+3. Rename it to **Send to Kobo**
+4. Replace the URL with the following — substituting your server URL and API token:
 
 ```
-javascript:(function(){fetch('http://192.168.1.42:5000/convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:window.location.href})}).then(r=>r.json()).then(d=>alert(d.ok?'✓ Sent: '+d.title:'✗ '+d.error)).catch(e=>alert('Error: '+e))})()
+javascript:(function(){fetch('https://YOUR-APP-NAME.onrender.com/convert',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer YOUR_API_TOKEN'},body:JSON.stringify({url:window.location.href})}).then(r=>r.json()).then(d=>alert(d.ok?'✓ Sent: '+d.title:'✗ '+d.error)).catch(e=>alert('Error: '+e))})()
 ```
 
-5. Save the bookmark
+5. Save it
 
-While reading an article in Safari, tap the bookmarks icon → tap **Send to Kobo**.
-
----
-
-## Running the server automatically
-
-### macOS — launchd
-
-Create `~/Library/LaunchAgents/com.sendtokobo.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>com.sendtokobo</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/usr/bin/python3</string>
-    <string>/path/to/send-to-Kobo/app.py</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>WorkingDirectory</key><string>/path/to/send-to-Kobo</string>
-</dict>
-</plist>
-```
-
-```bash
-launchctl load ~/Library/LaunchAgents/com.sendtokobo.plist
-```
-
-### Linux / Raspberry Pi — systemd
-
-```ini
-# /etc/systemd/system/send-to-kobo.service
-[Unit]
-Description=Send to Kobo web server
-After=network.target
-
-[Service]
-User=YOUR_USER
-WorkingDirectory=/path/to/send-to-Kobo
-ExecStart=python3 /path/to/send-to-Kobo/app.py
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl enable --now send-to-kobo
-```
-
----
-
-## CLI usage
-
-The CLI is still available for scripting or one-off use:
-
-```bash
-# Convert and upload
-python send_to_kobo.py https://example.com/some-article
-
-# Save locally only (no upload)
-python send_to_kobo.py https://example.com/article --no-upload
-
-# Upload to a specific folder
-python send_to_kobo.py https://example.com/article --folder-id YOUR_FOLDER_ID
-```
+While reading an article: tap the bookmarks icon → **Send to Kobo**.
 
 ---
 
 ## Reading on Kobo
 
 ### Google Drive sync (easiest)
-If your Kobo is linked to a Google account, books saved to the configured Drive folder appear automatically under **My Books → Cloud** on the next sync.
+If your Kobo is linked to a Google account, books in the configured Drive folder appear automatically under **My Books → Cloud** on the next sync.
 
-### Sideload via USB
-Use `--no-upload`, then copy the `.epub` to the `Digital Editions` folder on your Kobo via USB.
+### USB sideload
+Download the EPUB from Google Drive to your device, then transfer to the Kobo via the **Kobo iOS app** or copy to the `Digital Editions` folder over USB.
+
+---
+
+## CLI usage (optional)
+
+The command-line tool still works for scripting or one-off use, running locally:
+
+```bash
+pip install -r requirements.txt
+python send_to_kobo.py https://example.com/some-article
+python send_to_kobo.py https://example.com/article --no-upload --output article.epub
+python send_to_kobo.py config --folder-id YOUR_FOLDER_ID
+```
 
 ---
 
@@ -214,10 +178,10 @@ Use `--no-upload`, then copy the `.epub` to the `Digital Editions` folder on you
 
 | Problem | Fix |
 |---|---|
-| iPhone can't reach the server | Make sure both are on the same Wi-Fi; check server IP with `ifconfig` or System Settings |
-| `credentials.json not found` | Download it from Google Cloud Console (Setup step 2) |
-| OAuth error on `/auth` | This must be visited from the server machine's browser, not your iPhone |
-| Token expired | Delete `~/.send_to_kobo_token.json` and re-visit `/auth` |
-| Shortcut shows raw JSON instead of notification | Edit the Show Notification action and select the `Get Contents` result variable |
-| Page content looks sparse | Some sites block scrapers or use heavy JavaScript; try a reader-mode URL if available |
-| Drive upload 403 | Ensure the Google Drive API is enabled in your Cloud project |
+| Shortcut returns "Unauthorized" | Check the `Authorization: Bearer TOKEN` header matches `API_TOKEN` in Render |
+| `/auth` shows "No Google credentials" | Paste your `credentials.json` content into `GOOGLE_CREDENTIALS_JSON` in Render |
+| OAuth callback error | Make sure the redirect URI in Google Cloud Console exactly matches `https://YOUR-APP.onrender.com/auth/callback` |
+| First request after inactivity is slow | Free tier apps sleep; the first request takes ~30s to wake up. Normal. |
+| Drive upload 403 | Confirm the Google Drive API is enabled in your Google Cloud project |
+| Page content looks sparse | Some sites use heavy JavaScript; try the article's "reader mode" URL if available |
+| Token expired | Visit `https://YOUR-APP.onrender.com/auth` again to re-authenticate |

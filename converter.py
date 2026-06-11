@@ -1,6 +1,7 @@
 """Core conversion logic shared by the CLI and web server."""
 
 import json
+import os
 import re
 import uuid
 from pathlib import Path
@@ -18,7 +19,8 @@ from googleapiclient.http import MediaFileUpload
 
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 CONFIG_PATH = Path.home() / ".send_to_kobo.json"
-TOKEN_PATH = Path.home() / ".send_to_kobo_token.json"
+# TOKEN_DIR env var lets cloud deployments point at a persistent-disk path (e.g. /data)
+TOKEN_PATH = Path(os.environ.get("TOKEN_DIR", str(Path.home()))) / ".send_to_kobo_token.json"
 
 EPUB_CSS = """\
 body {
@@ -242,6 +244,11 @@ def get_drive_service(credentials_path=None):
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
+            # Cloud deployments set GOOGLE_CREDENTIALS_JSON and authenticate via /auth
+            if os.environ.get("GOOGLE_CREDENTIALS_JSON"):
+                raise RuntimeError(
+                    "Not authenticated. Visit /auth in a browser to sign in to Google Drive."
+                )
             if not creds_file.exists():
                 raise FileNotFoundError(
                     f"'{creds_file}' not found. See README.md for Google Drive setup."
@@ -249,6 +256,7 @@ def get_drive_service(credentials_path=None):
             flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), SCOPES)
             creds = flow.run_local_server(port=0)
 
+        TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(TOKEN_PATH, "w") as f:
             f.write(creds.to_json())
 

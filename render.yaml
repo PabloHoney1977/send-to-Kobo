@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: send-to-kobo
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    # 2 workers would share no state, 1 is correct for a single-user app
+    # timeout 120s because article conversion can take 30+ seconds
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120
+    disk:
+      name: kobo-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true    # Render generates this automatically
+      - key: API_TOKEN
+        generateValue: true    # Render generates this — copy it into your iOS Shortcut
+      - key: TOKEN_DIR
+        value: /data           # Store Google auth token on the persistent disk
+      - key: GOOGLE_CREDENTIALS_JSON
+        sync: false            # You paste this in the Render dashboard (see README)
+      - key: DRIVE_FOLDER_ID
+        sync: false            # Optional: your Google Drive folder ID
