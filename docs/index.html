@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude → EPUB</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, sans-serif;
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 20px;
+    background: #fafafa;
+    color: #222;
+  }
+  h1 { font-size: 1.5em; margin-bottom: 4px; }
+  .sub { color: #666; font-size: 0.9em; margin-bottom: 24px; }
+  label { display: block; font-weight: 600; margin-bottom: 4px; }
+  input[type=text], textarea {
+    width: 100%;
+    padding: 10px;
+    font-size: 1em;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    margin-bottom: 12px;
+    background: #fff;
+  }
+  textarea { height: 220px; font-family: monospace; font-size: 0.85em; resize: vertical; }
+  button {
+    background: #2c5fcf;
+    color: #fff;
+    border: none;
+    padding: 12px 28px;
+    font-size: 1em;
+    border-radius: 6px;
+    cursor: pointer;
+    width: 100%;
+  }
+  button:hover { background: #1a4bbf; }
+  button:disabled { background: #99aee8; cursor: default; }
+  #status {
+    margin-top: 16px;
+    padding: 12px;
+    border-radius: 6px;
+    display: none;
+  }
+  #status.ok  { background: #eef4ff; color: #1a3a8a; display: block; }
+  #status.err { background: #fee;    color: #900;    display: block; }
+  .bookmarklet-box {
+    margin-top: 32px;
+    padding: 16px;
+    background: #f0f4ff;
+    border-radius: 8px;
+    border: 1px solid #ccd6ff;
+  }
+  .bookmarklet-box h2 { font-size: 1em; margin: 0 0 8px; }
+  .bookmarklet-box p  { font-size: 0.85em; color: #444; margin: 0 0 10px; }
+  .bm-link {
+    display: inline-block;
+    background: #fff;
+    border: 2px solid #2c5fcf;
+    border-radius: 6px;
+    padding: 8px 16px;
+    color: #2c5fcf;
+    font-weight: 600;
+    font-size: 0.9em;
+    text-decoration: none;
+    cursor: grab;
+  }
+  .bm-link:hover { background: #eef4ff; }
+  .tip { font-size: 0.78em; color: #888; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<h1>📖 Claude → EPUB</h1>
+<p class="sub">Convert a Claude conversation to an EPUB file and open it in Kobo.</p>
+
+<div id="auto-status"></div>
+
+<label for="title">Title</label>
+<input type="text" id="title" placeholder="e.g. Planning my garden" maxlength="100">
+
+<label for="content">Conversation (paste from Claude, or use the bookmarklet below)</label>
+<textarea id="content" placeholder="Paste your Claude conversation here…"></textarea>
+
+<button id="btn" onclick="convert()">Download EPUB</button>
+<div id="status"></div>
+
+<div class="bookmarklet-box">
+  <h2>⚡ One-tap from Safari on claude.ai</h2>
+  <p>Drag this link to your Safari bookmarks bar (or on iPhone/iPad: tap it, then <em>Add Bookmark</em>). Then tap it while viewing any Claude conversation to instantly download the EPUB.</p>
+  <a class="bm-link" id="bm" href="">📖 Send to Kobo</a>
+  <p class="tip">If the bookmarklet doesn't work on a page (some sites block external scripts), copy-paste the conversation into the box above instead.</p>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Bookmarklet href — extract from page → open this app with content in URL
+// ---------------------------------------------------------------------------
+(function() {
+  var base = window.location.origin + window.location.pathname;
+  var bm = "(function(){"
+    + "var t=document.title.replace(/\\s*[-|\\u2014].*$/,'').trim()||'Claude Conversation';"
+    + "var msgs=document.querySelectorAll('[data-testid=\"user-message\"],[data-testid=\"assistant-message\"]');"
+    + "var c='';"
+    + "if(msgs.length>0){"
+    +   "msgs.forEach(function(m){"
+    +     "var r=m.getAttribute('data-testid')==='user-message'?'**You:** ':'**Claude:** ';"
+    +     "c+=r+(m.innerText||'').trim()+'\\n\\n---\\n\\n';"
+    +   "});"
+    + "}else{"
+    +   "var main=document.querySelector('main')||document.body;"
+    +   "c=main.innerText.trim();"
+    + "}"
+    + "window.open('" + base + "?title='+encodeURIComponent(t)+'&content='+encodeURIComponent(c));"
+  + "})()";
+  document.getElementById('bm').href = 'javascript:' + bm;
+})();
+
+// ---------------------------------------------------------------------------
+// Auto-convert when opened with ?content= params (from bookmarklet)
+// ---------------------------------------------------------------------------
+(function() {
+  var p = new URLSearchParams(window.location.search);
+  var content = p.get('content');
+  var title   = p.get('title');
+  if (!content) return;
+
+  document.getElementById('title').value   = title || '';
+  document.getElementById('content').value = content;
+
+  var s = document.getElementById('auto-status');
+  s.textContent = 'Generating EPUB…';
+  s.style.cssText = 'padding:10px;background:#eef4ff;border-radius:6px;color:#1a3a8a;margin-bottom:16px;';
+
+  // Small delay so the page paints first
+  setTimeout(function() { convert(true); }, 200);
+})();
+
+// ---------------------------------------------------------------------------
+// EPUB generation
+// ---------------------------------------------------------------------------
+async function convert(auto) {
+  var title   = document.getElementById('title').value.trim() || 'Claude Conversation';
+  var content = document.getElementById('content').value.trim();
+  var status  = document.getElementById('status');
+  var btn     = document.getElementById('btn');
+
+  if (!content) {
+    status.className = 'err';
+    status.textContent = 'Please paste some conversation text first.';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Generating…';
+  status.className = '';
+  status.style.display = 'none';
+
+  try {
+    var blob = await buildEpub(title, content);
+    downloadBlob(blob, sanitise(title) + '.epub');
+
+    var s = document.getElementById('auto-status');
+    if (s) { s.textContent = '✓ EPUB downloaded — tap it and choose Open in Kobo.'; s.style.background = '#d4edda'; s.style.color = '#155724'; }
+
+    status.className = 'ok';
+    status.textContent = '✓ EPUB downloaded. Tap the file and choose Open in Kobo.';
+  } catch(e) {
+    status.className = 'err';
+    status.textContent = '✗ Error: ' + e.message;
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Download EPUB';
+}
+
+function sanitise(s) {
+  return s.replace(/[^a-z0-9 _-]/gi, '').trim().replace(/\s+/g, '_').substring(0, 60) || 'conversation';
+}
+
+function downloadBlob(blob, filename) {
+  var url = URL.createObjectURL(blob);
+  var a   = document.createElement('a');
+  a.href  = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function() { URL.revokeObjectURL(url); a.remove(); }, 2000);
+}
+
+async function buildEpub(title, markdownText) {
+  // Convert markdown to HTML using marked
+  var bodyHtml = marked.parse(markdownText, { breaks: true });
+
+  // Style separators (--- dividers between turns)
+  bodyHtml = bodyHtml.replace(/<hr>/g, '<hr style="border:none;border-top:1px solid #ccc;margin:1em 0"/>');
+
+  var uid  = 'urn:uuid:' + crypto.randomUUID();
+  var date = new Date().toISOString().split('T')[0];
+  var esc  = title.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  var css = [
+    'body{font-family:Georgia,"Times New Roman",serif;font-size:1em;line-height:1.6;margin:0 1em;color:#222}',
+    'h1{font-size:1.5em;font-family:Helvetica,Arial,sans-serif}',
+    'h2,h3{font-family:Helvetica,Arial,sans-serif;color:#111}',
+    'p{margin:.7em 0;text-align:justify}',
+    'pre{background:#f5f5f5;padding:.8em;font-size:.85em;white-space:pre-wrap;word-break:break-word}',
+    'code{background:#f0f0f0;padding:.1em .3em;font-family:"Courier New",monospace;font-size:.85em}',
+    'blockquote{border-left:3px solid #ccc;margin-left:0;padding-left:1em;color:#555;font-style:italic}',
+    'strong{font-weight:bold}em{font-style:italic}',
+  ].join('\n');
+
+  var xhtml = '<?xml version="1.0" encoding="utf-8"?>'
+    + '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">'
+    + '<html xmlns="http://www.w3.org/1999/xhtml"><head>'
+    + '<title>' + esc + '</title>'
+    + '<link rel="stylesheet" href="style.css" type="text/css"/>'
+    + '</head><body>'
+    + '<h1>' + esc + '</h1>'
+    + bodyHtml
+    + '</body></html>';
+
+  var opf = '<?xml version="1.0" encoding="utf-8"?>'
+    + '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="uid" version="2.0">'
+    + '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+    + '<dc:title>' + esc + '</dc:title>'
+    + '<dc:identifier id="uid">' + uid + '</dc:identifier>'
+    + '<dc:language>en</dc:language>'
+    + '<dc:date>' + date + '</dc:date>'
+    + '</metadata>'
+    + '<manifest>'
+    + '<item id="article" href="article.xhtml" media-type="application/xhtml+xml"/>'
+    + '<item id="style"   href="style.css"     media-type="text/css"/>'
+    + '<item id="ncx"     href="toc.ncx"       media-type="application/x-dtbncx+xml"/>'
+    + '</manifest>'
+    + '<spine toc="ncx"><itemref idref="article"/></spine>'
+    + '</package>';
+
+  var ncx = '<?xml version="1.0" encoding="utf-8"?>'
+    + '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">'
+    + '<head><meta name="dtb:uid" content="' + uid + '"/></head>'
+    + '<docTitle><text>' + esc + '</text></docTitle>'
+    + '<navMap><navPoint id="n1" playOrder="1">'
+    + '<navLabel><text>' + esc + '</text></navLabel>'
+    + '<content src="article.xhtml"/>'
+    + '</navPoint></navMap></ncx>';
+
+  var container = '<?xml version="1.0" encoding="UTF-8"?>'
+    + '<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+    + '<rootfiles>'
+    + '<rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>'
+    + '</rootfiles></container>';
+
+  var zip = new JSZip();
+  zip.file('mimetype',              'application/epub+zip', { compression: 'STORE' });
+  zip.file('META-INF/container.xml', container);
+  zip.file('OEBPS/content.opf',     opf);
+  zip.file('OEBPS/toc.ncx',         ncx);
+  zip.file('OEBPS/style.css',       css);
+  zip.file('OEBPS/article.xhtml',   xhtml);
+
+  return zip.generateAsync({ type: 'blob', mimeType: 'application/epub+zip' });
+}
+</script>
+</body>
+</html>
