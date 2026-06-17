@@ -19,8 +19,28 @@ from googleapiclient.http import MediaFileUpload
 
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 CONFIG_PATH = Path.home() / ".send_to_kobo.json"
-# TOKEN_DIR env var lets cloud deployments point at a persistent-disk path (e.g. /data)
-TOKEN_PATH = Path(os.environ.get("TOKEN_DIR", str(Path.home()))) / ".send_to_kobo_token.json"
+
+
+def _resolve_token_dir() -> Path:
+    """Return a writable directory for the OAuth token.
+
+    Preference order:
+      1. TOKEN_DIR env var (e.g. /data on Render with a persistent disk)
+      2. /tmp  (always writable; token lost on restart if no disk)
+    """
+    candidate = Path(os.environ.get("TOKEN_DIR", str(Path.home())))
+    try:
+        candidate.mkdir(parents=True, exist_ok=True)
+        # Verify it's actually writable
+        test = candidate / ".write_test"
+        test.touch()
+        test.unlink()
+        return candidate
+    except OSError:
+        return Path("/tmp")
+
+
+TOKEN_PATH = _resolve_token_dir() / ".send_to_kobo_token.json"
 
 EPUB_CSS = """\
 body {
