@@ -212,6 +212,10 @@ def auth_start():
 
     auth_url, state = flow.authorization_url(prompt="consent", access_type="offline")
     session["oauth_state"] = state
+    # PKCE: newer google-auth-oauthlib generates a code_verifier; persist it so
+    # the callback can send it to Google during token exchange.
+    if getattr(flow, "code_verifier", None):
+        session["oauth_code_verifier"] = flow.code_verifier
     return redirect(auth_url)
 
 
@@ -223,6 +227,10 @@ def auth_callback():
 
     try:
         flow = _get_google_flow(url_for("auth_callback", _external=True))
+        # Restore the PKCE code verifier if one was generated during /auth
+        code_verifier = session.get("oauth_code_verifier")
+        if code_verifier:
+            flow.code_verifier = code_verifier
         flow.fetch_token(authorization_response=request.url, state=state)
     except Exception as e:
         return _page(f"<p style='color:#c00'>OAuth error: {e}</p>"), 500
