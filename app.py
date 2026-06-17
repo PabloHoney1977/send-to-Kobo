@@ -232,12 +232,18 @@ def auth_callback():
         if code_verifier:
             flow.code_verifier = code_verifier
         flow.fetch_token(authorization_response=request.url, state=state)
-    except Exception as e:
-        return _page(f"<p style='color:#c00'>OAuth error: {e}</p>"), 500
 
-    converter.TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(converter.TOKEN_PATH, "w") as f:
-        f.write(flow.credentials.to_json())
+        converter.TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(converter.TOKEN_PATH, "w") as f:
+            f.write(flow.credentials.to_json())
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return _page(
+            f"<p style='color:#c00'>OAuth error: {e}</p>"
+            f"<pre style='font-size:0.75em;overflow:auto'>{tb}</pre>"
+            "<p><a href='/auth'>Try again</a></p>"
+        ), 500
 
     return _page(
         "<div class='ok'>&#10003; Signed in to Google Drive! "
