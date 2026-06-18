@@ -13,6 +13,7 @@ from ebooklib import epub
 from readability import Document
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from google.oauth2 import service_account
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -300,10 +301,19 @@ def create_epub(title, content_html, source_url, session, output_path, original_
 # ---------------------------------------------------------------------------
 
 def is_authenticated():
-    return TOKEN_PATH.exists()
+    return bool(os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")) or TOKEN_PATH.exists()
 
 
 def get_drive_service(credentials_path=None):
+    # Service account: no token file, no OAuth, never expires
+    sa_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if sa_json:
+        creds = service_account.Credentials.from_service_account_info(
+            json.loads(sa_json), scopes=SCOPES
+        )
+        return build("drive", "v3", credentials=creds)
+
+    # Fall back to OAuth user credentials (local dev or legacy deployments)
     creds = None
     creds_file = Path(credentials_path) if credentials_path else Path("credentials.json")
 
@@ -314,7 +324,6 @@ def get_drive_service(credentials_path=None):
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            # Cloud deployments set GOOGLE_CREDENTIALS_JSON and authenticate via /auth
             if os.environ.get("GOOGLE_CREDENTIALS_JSON"):
                 raise RuntimeError(
                     "Not authenticated. Visit /auth in a browser to sign in to Google Drive."
