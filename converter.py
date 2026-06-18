@@ -198,7 +198,46 @@ def _embed_images(soup, base_url, session, book):
     return count
 
 
-def create_epub(title, content_html, source_url, session, output_path):
+def _recover_images(original_html, base_url, session, book):
+    """Fallback: extract images from original page HTML when readability strips them.
+    Returns (gallery_tag, n_images) where gallery_tag is a <div> ready to prepend."""
+    orig = BeautifulSoup(original_html, "lxml")
+    # Remove non-article chrome
+    for sel in (
+        "#mw-navigation", ".navbox", ".reflist", ".references", ".refbegin",
+        ".mw-editsection", ".toc", "#toc", "#catlinks", ".printfooter",
+        "nav", "header", "footer", ".sidebar", ".advertisement",
+    ):
+        for el in orig.select(sel):
+            el.decompose()
+    # Find main content area
+    main = (
+        orig.find(id="mw-content-text") or  # Wikipedia desktop
+        orig.find(id="content") or           # Wikipedia mobile
+        orig.find("article") or
+        orig.find(attrs={"role": "main"}) or
+        orig.body
+    )
+    if not main:
+        return None, 0
+    # Collect figure/thumb wrappers; fall back to bare img tags
+    candidates = main.find_all("figure")
+    if not candidates:
+        candidates = main.find_all(
+            "div", class_=lambda c: c and any(x in c for x in ("thumb", "image"))
+        )
+    if not candidates:
+        candidates = main.find_all("img")
+    if not candidates:
+        return None, 0
+    gallery = BeautifulSoup('<div class="image-gallery"></div>', "lxml").find("div")
+    for el in list(candidates):
+        gallery.append(el)
+    n = _embed_images(gallery, base_url, session, book)
+    return (gallery, n) if n > 0 else (None, 0)
+
+
+def create_epub(title, content_html, source_url, session, output_path, original_html=None):
     book = epub.EpubBook()
     book.set_identifier(str(uuid.uuid4()))
     book.set_title(title)
@@ -212,6 +251,13 @@ def create_epub(title, content_html, source_url, session, output_path):
         el.decompose()
 
     n_images = _embed_images(soup, source_url, session, book)
+
+    # Readability often strips lazy-loaded images; recover them from the original HTML
+    if n_images == 0 and original_html:
+        gallery, n_images = _recover_images(original_html, source_url, session, book)
+        if gallery:
+            body = soup.find("body") or soup
+            body.insert(0, gallery)
 
     style = epub.EpubItem(
         uid="style",
@@ -312,7 +358,7 @@ def convert_and_upload(url, folder_id=None, output_path=None, credentials_path=N
     title, content_html = extract_content(html, final_url)
 
     epub_path = Path(output_path) if output_path else Path(sanitize_filename(title) + ".epub")
-    n_images = create_epub(title, content_html, final_url, session, epub_path)
+    n_images = create_epub(title, content_html, final_url, session, epub_path, original_html=html)
     size_kb = epub_path.stat().st_size // 1024
 
     service = get_drive_service(credentials_path)
