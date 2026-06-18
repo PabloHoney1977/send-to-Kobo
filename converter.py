@@ -165,13 +165,14 @@ def _embed_images(soup, base_url, session, book):
     }
     count = 0
     for img in soup.find_all("img"):
-        src = (
-            img.get("src")
-            or img.get("data-src")
-            or img.get("data-lazy-src")
-            or img.get("data-original")
-        )
-        if not src or src.startswith("data:"):
+        # Try each attribute in order, skipping data: URIs (lazy-load placeholders)
+        src = None
+        for attr in ("src", "data-src", "data-lazy-src", "data-original"):
+            val = img.get(attr, "")
+            if val and not val.startswith("data:"):
+                src = val
+                break
+        if not src:
             img.decompose()
             continue
 
@@ -205,6 +206,11 @@ def create_epub(title, content_html, source_url, session, output_path):
     book.add_metadata("DC", "source", source_url)
 
     soup = BeautifulSoup(content_html, "lxml")
+
+    # Strip Wikipedia-specific clutter: citation superscripts [1][2]..., edit links
+    for el in soup.select("sup.reference, .mw-editsection, .noprint"):
+        el.decompose()
+
     n_images = _embed_images(soup, source_url, session, book)
 
     style = epub.EpubItem(
