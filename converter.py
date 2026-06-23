@@ -158,6 +158,46 @@ def _download_image(img_url, session):
         return None, None
 
 
+def _best_src(img):
+    """Return the highest-resolution image URL from an <img> tag.
+
+    Prefers the largest entry in srcset (by pixel descriptor), then falls
+    back through src / data-src / data-lazy-src / data-original in order,
+    skipping data: URI placeholders used for lazy loading.
+    """
+    # Parse srcset: "url1 1.5x, url2 2x" or "url1 320w, url2 640w"
+    srcset = img.get("srcset", "")
+    if srcset:
+        best_url, best_val = None, -1.0
+        for part in srcset.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            tokens = part.split()
+            if not tokens:
+                continue
+            url = tokens[0]
+            if url.startswith("data:"):
+                continue
+            descriptor = 1.0
+            if len(tokens) > 1:
+                d = tokens[1].lower().rstrip("wx")
+                try:
+                    descriptor = float(d)
+                except ValueError:
+                    pass
+            if descriptor > best_val:
+                best_val, best_url = descriptor, url
+        if best_url:
+            return best_url
+
+    for attr in ("src", "data-src", "data-lazy-src", "data-original"):
+        val = img.get(attr, "")
+        if val and not val.startswith("data:"):
+            return val
+    return None
+
+
 def _embed_images(soup, base_url, session, book):
     ext_map = {
         "image/jpeg": "jpg",
@@ -169,13 +209,7 @@ def _embed_images(soup, base_url, session, book):
     }
     count = 0
     for img in soup.find_all("img"):
-        # Try each attribute in order, skipping data: URIs (lazy-load placeholders)
-        src = None
-        for attr in ("src", "data-src", "data-lazy-src", "data-original"):
-            val = img.get(attr, "")
-            if val and not val.startswith("data:"):
-                src = val
-                break
+        src = _best_src(img)
         if not src:
             img.decompose()
             continue
