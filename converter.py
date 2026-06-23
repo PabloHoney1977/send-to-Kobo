@@ -106,7 +106,12 @@ def save_config(config):
 # ---------------------------------------------------------------------------
 
 def fetch_page(url):
-    headers = {
+    session = requests.Session()
+    # Set headers on the SESSION so they persist to every request, including the
+    # image downloads in _download_image. Wikimedia (upload.wikimedia.org) returns
+    # 403 to the default python-requests User-Agent, which previously caused all
+    # images to fail to download (text came through, images didn't).
+    session.headers.update({
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -114,9 +119,8 @@ def fetch_page(url):
         ),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
-    }
-    session = requests.Session()
-    response = session.get(url, headers=headers, timeout=30, allow_redirects=True)
+    })
+    response = session.get(url, timeout=30, allow_redirects=True)
     response.raise_for_status()
     return response.text, response.url, session
 
