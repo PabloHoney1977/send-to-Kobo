@@ -188,6 +188,7 @@ def _embed_images(soup, base_url, session, book):
         count += 1
 
         epub_img = epub.EpubImage()
+        epub_img.uid = f"img_{count}"
         epub_img.file_name = local_name
         epub_img.media_type = mime
         epub_img.content = data
@@ -269,6 +270,10 @@ def create_epub(title, content_html, source_url, session, output_path, original_
     book.add_item(style)
 
     escaped_title = title.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    # Use decode_contents() to get only the inner body HTML, avoiding nested <html><body>
+    # tags that lxml adds when parsing with BeautifulSoup.
+    body = soup.find("body")
+    inner_html = body.decode_contents() if body else str(soup)
     chapter_html = (
         '<?xml version="1.0" encoding="utf-8"?>'
         '<html xmlns="http://www.w3.org/1999/xhtml">'
@@ -278,7 +283,7 @@ def create_epub(title, content_html, source_url, session, output_path, original_
         "</head><body>"
         f"<h1>{escaped_title}</h1>"
         f'<p><small>Source: <a href="{source_url}">{source_url}</a></small></p>'
-        f"{soup}"
+        f"{inner_html}"
         "</body></html>"
     )
 
