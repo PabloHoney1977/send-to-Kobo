@@ -233,9 +233,14 @@ def auth_callback():
             flow.code_verifier = code_verifier
         flow.fetch_token(authorization_response=request.url, state=state)
 
-        converter.TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(converter.TOKEN_PATH, "w") as f:
-            f.write(flow.credentials.to_json())
+        token_json = flow.credentials.to_json()
+        # Best-effort write to disk (lost on free-tier Render restart — see below)
+        try:
+            converter.TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(converter.TOKEN_PATH, "w") as f:
+                f.write(token_json)
+        except OSError:
+            pass
     except Exception as e:
         import traceback
         tb = traceback.format_exc().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -245,9 +250,16 @@ def auth_callback():
             "<p><a href='/auth'>Try again</a></p>"
         ), 500
 
+    escaped = token_json.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return _page(
-        "<div class='ok'>&#10003; Signed in to Google Drive! "
-        "Your iPhone and iPad are now ready to send articles.</div>"
+        "<div class='ok'>&#10003; Signed in to Google Drive!</div>"
+        "<p>To make this <strong>permanent</strong> (survive server restarts), copy the "
+        "token below and add it as an environment variable named "
+        "<code>GOOGLE_TOKEN_JSON</code> in your Render dashboard:</p>"
+        f"<textarea readonly rows='6' style='width:100%;font-size:0.7em;box-sizing:border-box' "
+        f"onclick='this.select()'>{escaped}</textarea>"
+        "<p style='font-size:0.85em;color:#666'>After saving it in Render, redeploy. "
+        "You won't need to sign in again.</p>"
         "<p><a href='/'>&#8592; Back to home</a></p>"
     )
 

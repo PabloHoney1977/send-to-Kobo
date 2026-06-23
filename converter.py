@@ -13,7 +13,6 @@ from ebooklib import epub
 from readability import Document
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google.oauth2 import service_account
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -306,33 +305,33 @@ def create_epub(title, content_html, source_url, session, output_path, original_
 # ---------------------------------------------------------------------------
 
 def is_authenticated():
-    return bool(os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")) or TOKEN_PATH.exists()
+    # GOOGLE_TOKEN_JSON env var is the durable, free-tier path: an OAuth token
+    # captured once and pasted into the environment so it survives restarts.
+    return bool(os.environ.get("GOOGLE_TOKEN_JSON")) or TOKEN_PATH.exists()
+
+
+def _load_user_creds():
+    """Load OAuth user credentials from the GOOGLE_TOKEN_JSON env var or token file."""
+    token_json = os.environ.get("GOOGLE_TOKEN_JSON")
+    if token_json:
+        return Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
+    if TOKEN_PATH.exists():
+        return Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+    return None
 
 
 def get_drive_service(credentials_path=None):
-    # Service account: no token file, no OAuth, never expires
-    sa_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
-    if sa_json:
-        creds = service_account.Credentials.from_service_account_info(
-            json.loads(sa_json), scopes=SCOPES
-        )
-        return build("drive", "v3", credentials=creds)
-
-    # Fall back to OAuth user credentials (local dev or legacy deployments)
-    creds = None
-    creds_file = Path(credentials_path) if credentials_path else Path("credentials.json")
-
-    if TOKEN_PATH.exists():
-        creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+    creds = _load_user_creds()
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            if os.environ.get("GOOGLE_CREDENTIALS_JSON"):
+            if os.environ.get("GOOGLE_CREDENTIALS_JSON") or os.environ.get("GOOGLE_TOKEN_JSON"):
                 raise RuntimeError(
                     "Not authenticated. Visit /auth in a browser to sign in to Google Drive."
                 )
+            creds_file = Path(credentials_path) if credentials_path else Path("credentials.json")
             if not creds_file.exists():
                 raise FileNotFoundError(
                     f"'{creds_file}' not found. See README.md for Google Drive setup."
@@ -340,9 +339,15 @@ def get_drive_service(credentials_path=None):
             flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), SCOPES)
             creds = flow.run_local_server(port=0)
 
-        TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(TOKEN_PATH, "w") as f:
-            f.write(creds.to_json())
+        # Best-effort token persistence (works on disk-backed deployments / local dev).
+        # On free-tier Render this writes to /tmp and is lost on restart — which is
+        # why GOOGLE_TOKEN_JSON is the recommended way to persist credentials there.
+        try:
+            TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(TOKEN_PATH, "w") as f:
+                f.write(creds.to_json())
+        except OSError:
+            pass
 
     return build("drive", "v3", credentials=creds)
 
