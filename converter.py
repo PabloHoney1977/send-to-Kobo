@@ -1,5 +1,6 @@
 """Core conversion logic shared by the CLI and web server."""
 
+import io
 import json
 import os
 import re
@@ -16,6 +17,12 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+
+try:
+    from PIL import Image
+    _PIL_AVAILABLE = True
+except ImportError:
+    _PIL_AVAILABLE = False
 
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 CONFIG_PATH = Path.home() / ".send_to_kobo.json"
@@ -146,14 +153,56 @@ def sanitize_filename(name):
 # EPUB creation
 # ---------------------------------------------------------------------------
 
+def _normalize_image(data):
+    """Decode and re-encode an image as JPEG/PNG for e-reader compatibility.
+
+    Many Kobo firmware versions can't render WebP/AVIF/TIFF embedded in an
+    EPUB (they just show blank space), and some CDNs send a wrong or generic
+    Content-Type header. Round-tripping every image through Pillow both
+    verifies it decodes cleanly and normalizes it to a format every Kobo can
+    display. Returns (data, mime_type), or (None, None) if the image can't
+    be decoded at all.
+    """
+    if not _PIL_AVAILABLE:
+        return data, None
+    try:
+        im = Image.open(io.BytesIO(data))
+        im.load()
+    except Exception:
+        return None, None
+
+    has_alpha = im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info)
+    buf = io.BytesIO()
+    if has_alpha:
+        im.convert("RGBA").save(buf, format="PNG", optimize=True)
+        return buf.getvalue(), "image/png"
+    im.convert("RGB").save(buf, format="JPEG", quality=85)
+    return buf.getvalue(), "image/jpeg"
+
+
 def _download_image(img_url, session):
     try:
-        resp = session.get(img_url, timeout=15)
+        resp = session.get(img_url, timeout=20)
         resp.raise_for_status()
+        raw = resp.content
         ct = resp.headers.get("content-type", "").split(";")[0].strip()
+
+        # SVGs decode fine as text but Pillow can't rasterize them; pass
+        # through unchanged rather than feeding them to _normalize_image.
+        if ct == "image/svg+xml" or img_url.lower().split("?")[0].endswith(".svg"):
+            return raw, "image/svg+xml"
+
+        data, mime = _normalize_image(raw)
+        if mime is not None:
+            return data, mime
+        if data is None:
+            return None, None
+
+        # Pillow unavailable or couldn't decode; fall back to the declared
+        # content-type (previous behaviour).
         if not ct.startswith("image/"):
             ct = "image/jpeg"
-        return resp.content, ct
+        return raw, ct
     except Exception:
         return None, None
 
@@ -283,6 +332,10 @@ def create_epub(title, content_html, source_url, session, output_path, original_
     book.set_language("en")
     book.add_metadata("DC", "source", source_url)
 
+    # Some CDNs reject image requests without a Referer matching the page
+    # that embeds them, even though the page itself fetched fine.
+    session.headers.update({"Referer": source_url})
+
     soup = BeautifulSoup(content_html, "lxml")
 
     # Strip Wikipedia-specific clutter: citation superscripts [1][2]..., edit links
@@ -297,6 +350,18 @@ def create_epub(title, content_html, source_url, session, output_path, original_
         if gallery:
             body = soup.find("body") or soup
             body.insert(0, gallery)
+
+    # Source sites often wrap images in containers with a fixed pixel width
+    # (e.g. Wikipedia's <div class="thumb" style="width:220px">). The <img>
+    # tag's own size attributes are already stripped in _embed_images, but a
+    # sized wrapper still clamps it below the CSS max-width:100% rule. Strip
+    # sizing from every non-img element so images render at full width.
+    for tag in soup.find_all(True):
+        if tag.name == "img":
+            continue
+        for attr in ("style", "width", "height"):
+            if attr in tag.attrs:
+                del tag.attrs[attr]
 
     style = epub.EpubItem(
         uid="style",
