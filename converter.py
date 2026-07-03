@@ -207,38 +207,64 @@ def _download_image(img_url, session):
         return None, None
 
 
-def _best_src(img):
-    """Return the highest-resolution image URL from an <img> tag.
+_EXT_MAP = {
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/svg+xml": "svg",
+}
 
-    Prefers the largest entry in srcset (by pixel descriptor), then falls
-    back through src / data-src / data-lazy-src / data-original in order,
-    skipping data: URI placeholders used for lazy loading.
+
+def _pick_best_from_srcset(srcset):
+    """Return the highest-resolution URL from a srcset string, or None.
+
+    Handles both "url 320w, url 640w" (width) and "url 1x, url 2x" (density)
+    descriptor forms; picks the entry with the largest numeric value.
     """
-    # Parse srcset: "url1 1.5x, url2 2x" or "url1 320w, url2 640w"
-    srcset = img.get("srcset", "")
-    if srcset:
-        best_url, best_val = None, -1.0
-        for part in srcset.split(","):
-            part = part.strip()
-            if not part:
-                continue
-            tokens = part.split()
-            if not tokens:
-                continue
-            url = tokens[0]
-            if url.startswith("data:"):
-                continue
-            descriptor = 1.0
-            if len(tokens) > 1:
-                d = tokens[1].lower().rstrip("wx")
-                try:
-                    descriptor = float(d)
-                except ValueError:
-                    pass
-            if descriptor > best_val:
-                best_val, best_url = descriptor, url
-        if best_url:
-            return best_url
+    best_url, best_val = None, -1.0
+    for part in srcset.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        tokens = part.split()
+        if not tokens:
+            continue
+        url = tokens[0]
+        if url.startswith("data:"):
+            continue
+        descriptor = 1.0
+        if len(tokens) > 1:
+            d = tokens[1].lower().rstrip("wx")
+            try:
+                descriptor = float(d)
+            except ValueError:
+                pass
+        if descriptor > best_val:
+            best_val, best_url = descriptor, url
+    return best_url
+
+
+def _best_src(img):
+    """Return the highest-resolution image URL for an <img> tag.
+
+    Prefers the largest entry in the img's own srcset, then falls back to
+    a parent <picture>'s <source srcset> (common for art-directed hero/lead
+    images that carry no usable src on the <img> itself), then src /
+    data-src / data-lazy-src / data-original, skipping data: URI
+    placeholders used for lazy loading.
+    """
+    best = _pick_best_from_srcset(img.get("srcset", ""))
+    if best:
+        return best
+
+    picture = img.find_parent("picture")
+    if picture:
+        for source in picture.find_all("source"):
+            best = _pick_best_from_srcset(source.get("srcset", ""))
+            if best:
+                return best
 
     for attr in ("src", "data-src", "data-lazy-src", "data-original"):
         val = img.get(attr, "")
@@ -247,15 +273,9 @@ def _best_src(img):
     return None
 
 
-def _embed_images(soup, base_url, session, book):
-    ext_map = {
-        "image/jpeg": "jpg",
-        "image/jpg": "jpg",
-        "image/png": "png",
-        "image/gif": "gif",
-        "image/webp": "webp",
-        "image/svg+xml": "svg",
-    }
+def _embed_images(soup, base_url, session, book, seen_urls=None):
+    if seen_urls is None:
+        seen_urls = set()
     count = 0
     for img in soup.find_all("img"):
         src = _best_src(img)
@@ -269,7 +289,7 @@ def _embed_images(soup, base_url, session, book):
             img.decompose()
             continue
 
-        ext = ext_map.get(mime, "jpg")
+        ext = _EXT_MAP.get(mime, "jpg")
         local_name = f"images/img_{count:03d}.{ext}"
         count += 1
 
@@ -282,11 +302,54 @@ def _embed_images(soup, base_url, session, book):
 
         img["src"] = local_name
         img.attrs = {k: v for k, v in img.attrs.items() if k in ("src", "alt", "title")}
+        seen_urls.add(img_url)
 
     return count
 
 
-def _recover_images(original_html, base_url, session, book):
+def _extract_lead_image_url(original_html, base_url):
+    """Return the article's lead/featured image URL from social meta tags.
+
+    Sites almost universally set og:image (or twitter:image) to the exact
+    hero image shown atop the article, regardless of where that image
+    actually lives in the DOM. Readability frequently drops this image
+    because it sits in a post header outside the extracted content block
+    (e.g. a WordPress "featured image"), so this is a more reliable way to
+    recover it than re-scanning the body.
+    """
+    orig = BeautifulSoup(original_html, "lxml")
+    for selector in (
+        {"property": "og:image"},
+        {"property": "og:image:url"},
+        {"name": "twitter:image"},
+        {"name": "twitter:image:src"},
+    ):
+        tag = orig.find("meta", attrs=selector)
+        if tag and tag.get("content"):
+            return urljoin(base_url, tag["content"].strip())
+    return None
+
+
+def _embed_lead_image(img_url, base_url, session, book, seen_urls):
+    """Download and wrap the lead image as a standalone <img> tag, or None on failure."""
+    data, mime = _download_image(img_url, session)
+    if not data:
+        return None
+    ext = _EXT_MAP.get(mime, "jpg")
+    local_name = f"images/lead.{ext}"
+
+    epub_img = epub.EpubImage()
+    epub_img.uid = "img_lead"
+    epub_img.file_name = local_name
+    epub_img.media_type = mime
+    epub_img.content = data
+    book.add_item(epub_img)
+    seen_urls.add(img_url)
+
+    return BeautifulSoup(f'<img src="{local_name}" alt=""/>', "lxml").find("img")
+
+
+def _recover_images(original_html, base_url, session, book, seen_urls=None):
     """Fallback: extract images from original page HTML when readability strips them.
     Returns (gallery_tag, n_images) where gallery_tag is a <div> ready to prepend."""
     orig = BeautifulSoup(original_html, "lxml")
@@ -321,7 +384,7 @@ def _recover_images(original_html, base_url, session, book):
     gallery = BeautifulSoup('<div class="image-gallery"></div>', "lxml").find("div")
     for el in list(candidates):
         gallery.append(el)
-    n = _embed_images(gallery, base_url, session, book)
+    n = _embed_images(gallery, base_url, session, book, seen_urls)
     return (gallery, n) if n > 0 else (None, 0)
 
 
@@ -342,14 +405,29 @@ def create_epub(title, content_html, source_url, session, output_path, original_
     for el in soup.select("sup.reference, .mw-editsection, .noprint"):
         el.decompose()
 
-    n_images = _embed_images(soup, source_url, session, book)
+    seen_urls = set()
+    n_images = _embed_images(soup, source_url, session, book, seen_urls)
 
     # Readability often strips lazy-loaded images; recover them from the original HTML
     if n_images == 0 and original_html:
-        gallery, n_images = _recover_images(original_html, source_url, session, book)
+        gallery, n_images = _recover_images(original_html, source_url, session, book, seen_urls)
         if gallery:
             body = soup.find("body") or soup
             body.insert(0, gallery)
+
+    # The article's lead/featured image often lives in a post header outside
+    # the block readability extracted as "content" (e.g. a WordPress
+    # "featured image"), so it silently never gets embedded above even when
+    # every other image in the body does. og:image/twitter:image reliably
+    # point at that exact image regardless of where it sits in the DOM.
+    if original_html:
+        lead_url = _extract_lead_image_url(original_html, source_url)
+        if lead_url and lead_url not in seen_urls:
+            lead_img = _embed_lead_image(lead_url, source_url, session, book, seen_urls)
+            if lead_img is not None:
+                body = soup.find("body") or soup
+                body.insert(0, lead_img)
+                n_images += 1
 
     # Source sites often wrap images in containers with a fixed pixel width
     # (e.g. Wikipedia's <div class="thumb" style="width:220px">). The <img>
