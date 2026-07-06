@@ -21,3 +21,18 @@ services:
         sync: false            # You paste this in the Render dashboard (see README)
       - key: DRIVE_FOLDER_ID
         sync: false            # Optional: your Google Drive folder ID
+
+  # Remote MCP server — lets Claude (web/desktop/iOS/Android) call
+  # send_to_kobo directly as a custom connector. See README.md.
+  - type: web
+    name: send-to-kobo-mcp
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python mcp_server.py
+    envVars:
+      - key: MCP_SECRET_PATH
+        generateValue: true    # Render generates this — forms part of your connector URL
+      - key: GOOGLE_TOKEN_JSON
+        sync: false            # Paste the same token you got from signing in on the main service
+      - key: DRIVE_FOLDER_ID
+        sync: false            # Optional: your Google Drive folder ID

@@ -151,6 +151,59 @@ While reading an article: tap the bookmarks icon → **Send to Kobo**.
 
 ---
 
+## Step 5 — Add the Claude connector (send chats straight from the app)
+
+Options A/B above only work for web pages you can share a URL for — they
+can't see the content of a Claude conversation, because claude.ai's share
+links are rendered client-side (there's no HTML for a server to fetch).
+
+`mcp_server.py` sidesteps that: it's a small remote MCP server exposing one
+tool, `send_to_kobo(title, content)`. Add it as a **custom connector** in
+Claude, and Claude can call it directly from *any* client — web, desktop,
+iOS, Android — passing the conversation text it already has in context. No
+fetching, no rendering, no Share Sheet involved.
+
+**Deploy it** (as a second Render service — already defined in `render.yaml`
+next to the main one):
+
+1. Push this repo (with `mcp_server.py` and the updated `render.yaml`) to
+   your fork, then in Render: **New → Blueprint** → select the repo. Render
+   creates both `send-to-kobo` and `send-to-kobo-mcp` from the one
+   `render.yaml`. (If you already created `send-to-kobo` manually, just add
+   `send-to-kobo-mcp` the same way, using `python mcp_server.py` as the
+   start command.)
+2. On the main `send-to-kobo` service, finish Steps 1–3 above (Google auth)
+   if you haven't already.
+3. Render dashboard → `send-to-kobo` service → **Environment** → open
+   `GOOGLE_TOKEN_JSON` (or read it off `/auth` after signing in) and copy
+   its value.
+4. Render dashboard → `send-to-kobo-mcp` service → **Environment** → paste
+   that same value into `GOOGLE_TOKEN_JSON` → **Save Changes**.
+5. Still on `send-to-kobo-mcp` → **Environment** → copy the generated
+   `MCP_SECRET_PATH` value.
+
+Your connector URL is:
+
+```
+https://YOUR-MCP-APP-NAME.onrender.com/YOUR_MCP_SECRET_PATH/mcp
+```
+
+**There's no login step for this endpoint** — anyone with that exact URL can
+upload files to your Kobo Drive folder, so treat it like a password: don't
+post it publicly, don't commit it, don't share it outside your own Claude
+connector settings.
+
+**Add it in Claude:**
+
+1. In Claude (web, desktop, or the app) go to **Settings → Connectors → Add
+   custom connector**
+2. Paste the URL from above, give it a name (e.g. "Send to Kobo"), save
+3. In any chat, just ask — e.g. *"send this conversation to my Kobo"* or
+   *"turn this into an EPUB and send it to Kobo"* — Claude will call the
+   tool and reply with the Drive link
+
+---
+
 ## Reading on Kobo
 
 ### Google Drive sync (easiest)
@@ -185,3 +238,5 @@ python send_to_kobo.py config --folder-id YOUR_FOLDER_ID
 | Drive upload 403 | Confirm the Google Drive API is enabled in your Google Cloud project |
 | Page content looks sparse | Some sites use heavy JavaScript; try the article's "reader mode" URL if available |
 | Token expired | Visit `https://YOUR-APP.onrender.com/auth` again to re-authenticate |
+| Connector tool call fails with "credentials.json not found" | You didn't copy `GOOGLE_TOKEN_JSON` from the main service into `send-to-kobo-mcp`'s environment |
+| Claude can't find/add the connector | Make sure the URL ends in `/mcp` and includes the exact `MCP_SECRET_PATH` value — a wrong path returns 404 |

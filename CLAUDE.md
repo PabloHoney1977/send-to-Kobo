@@ -85,5 +85,6 @@ a single EPUB with sections per source or topic.
 | `make_epub.py` | EPUB from any title + content file. No deps needed. |
 | `export_conversation.py` | EPUB from a Claude Code session JSONL file. |
 | `send_to_kobo.py` | CLI: fetch URL → EPUB → Drive (requires OAuth setup). |
-| `converter.py` | Shared library used by `send_to_kobo.py` and `app.py`. |
+| `converter.py` | Shared library used by `send_to_kobo.py`, `app.py`, and `mcp_server.py`. |
 | `app.py` | Flask web server for iOS Share Sheet workflow. |
+| `mcp_server.py` | Remote MCP server exposing `send_to_kobo(title, content)` as a custom Claude connector — lets any Claude client (web/desktop/iOS/Android) push content straight to Kobo without fetching/rendering a page. See README.md "Step 5". |
