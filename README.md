@@ -163,44 +163,104 @@ Claude, and Claude can call it directly from *any* client — web, desktop,
 iOS, Android — passing the conversation text it already has in context. No
 fetching, no rendering, no Share Sheet involved.
 
-**Deploy it** (as a second Render service — already defined in `render.yaml`
-next to the main one):
+**Make sure the code is on a branch Render can see.** If you're working off
+a feature branch (e.g. from a Claude Code session), either merge it to the
+branch your Render services deploy from, or point the new service at that
+branch directly in step 2 below — either works.
 
-1. Push this repo (with `mcp_server.py` and the updated `render.yaml`) to
-   your fork, then in Render: **New → Blueprint** → select the repo. Render
-   creates both `send-to-kobo` and `send-to-kobo-mcp` from the one
-   `render.yaml`. (If you already created `send-to-kobo` manually, just add
-   `send-to-kobo-mcp` the same way, using `python mcp_server.py` as the
-   start command.)
-2. On the main `send-to-kobo` service, finish Steps 1–3 above (Google auth)
-   if you haven't already.
-3. Render dashboard → `send-to-kobo` service → **Environment** → open
-   `GOOGLE_TOKEN_JSON` (or read it off `/auth` after signing in) and copy
-   its value.
-4. Render dashboard → `send-to-kobo-mcp` service → **Environment** → paste
-   that same value into `GOOGLE_TOKEN_JSON` → **Save Changes**.
-5. Still on `send-to-kobo-mcp` → **Environment** → copy the generated
-   `MCP_SECRET_PATH` value.
+### 5.1 — Create the second Render service
 
-Your connector URL is:
+You already created `send-to-kobo` by hand in Step 1 (**New → Web Service**),
+so create this one the same way rather than via Blueprint — mixing manual
+services with a Blueprint sync in the same Render project can get confusing.
 
-```
-https://YOUR-MCP-APP-NAME.onrender.com/YOUR_MCP_SECRET_PATH/mcp
-```
+1. Render dashboard → **New → Web Service**
+2. Connect the same GitHub repo you used for `send-to-kobo` (your fork)
+3. Pick the branch that has `mcp_server.py` (see note above)
+4. **Name:** `send-to-kobo-mcp` (anything works, you'll need the URL later either way)
+5. **Runtime:** Python 3
+6. **Build Command:** `pip install -r requirements.txt`
+7. **Start Command:** `python mcp_server.py`
+8. **Instance Type:** Free is fine (same as the main service)
+9. Don't click Create yet — open **Advanced** to add environment variables first (next section)
 
-**There's no login step for this endpoint** — anyone with that exact URL can
-upload files to your Kobo Drive folder, so treat it like a password: don't
-post it publicly, don't commit it, don't share it outside your own Claude
-connector settings.
+### 5.2 — Add its environment variables
 
-**Add it in Claude:**
+Still on the "New Web Service" setup screen (or **Environment** tab after
+creating it):
 
-1. In Claude (web, desktop, or the app) go to **Settings → Connectors → Add
-   custom connector**
-2. Paste the URL from above, give it a name (e.g. "Send to Kobo"), save
-3. In any chat, just ask — e.g. *"send this conversation to my Kobo"* or
-   *"turn this into an EPUB and send it to Kobo"* — Claude will call the
-   tool and reply with the Drive link
+1. **Add Environment Variable** → Key: `MCP_SECRET_PATH` → click **Generate**
+   next to the value field (Render fills in a random string). This becomes
+   part of your connector URL, acting like a password — nothing else
+   guards this endpoint.
+2. **Add Environment Variable** → Key: `GOOGLE_TOKEN_JSON` → leave the value
+   blank for now, save a placeholder — you'll fill it in in step 5.3.
+3. *(Optional)* **Add Environment Variable** → Key: `DRIVE_FOLDER_ID` →
+   same folder ID you used for the main service, if you set one there.
+4. Click **Create Web Service**. First deploy takes ~2 minutes.
+
+### 5.3 — Copy your Google auth token from the main service into this one
+
+The MCP server needs to sign in to Drive the same way the main service
+does, but it can't run the interactive `/auth` browser flow itself — it
+just reuses the token.
+
+1. Confirm the main `send-to-kobo` service is already signed in (Step 3
+   above). If you're not sure, visit `https://YOUR-APP-NAME.onrender.com/auth`
+   again — signing in again is harmless and shows the token either way.
+2. Render dashboard → `send-to-kobo` service → **Environment** tab
+3. Find `GOOGLE_TOKEN_JSON` → click the eye icon to reveal it → copy the
+   entire value (it's one long JSON string starting with `{` and ending
+   with `}`)
+   - If `GOOGLE_TOKEN_JSON` isn't there yet, get it from the `/auth` sign-in
+     page instead — it shows the same token in a text box right after you
+     authenticate, with instructions to paste it into this env var.
+4. Render dashboard → `send-to-kobo-mcp` service → **Environment** tab
+5. Click into `GOOGLE_TOKEN_JSON` → paste the value you copied → **Save
+   Changes** (this triggers a redeploy automatically, ~1 minute)
+
+### 5.4 — Build your connector URL
+
+1. On the `send-to-kobo-mcp` service page, copy the service's URL from the
+   top of the dashboard, e.g. `https://send-to-kobo-mcp.onrender.com`
+2. **Environment** tab → find `MCP_SECRET_PATH` → click the eye icon →
+   copy its value, e.g. `k3j9d8f7a2b1...`
+3. Your connector URL is those two pieces combined:
+
+   ```
+   https://send-to-kobo-mcp.onrender.com/k3j9d8f7a2b1.../mcp
+   ```
+
+   (service URL + `/` + the secret value + `/mcp` — no other slashes)
+
+**Treat this URL like a password.** There's no login screen guarding it —
+anyone who has the exact URL can upload files to your Kobo Drive folder.
+Don't post it publicly, commit it to a repo, or paste it anywhere other
+than your own Claude connector settings.
+
+### 5.5 — Add it as a custom connector in Claude
+
+1. In Claude (web, desktop app, or mobile app) open **Settings → Connectors**
+2. Tap/click **Add custom connector** (wording may vary slightly by
+   platform/version — look for "Add connector" or a "+" next to Connectors)
+3. **Name:** anything, e.g. `Send to Kobo`
+4. **URL:** paste the connector URL from 5.4
+5. Save — Claude should confirm it connected and list a `send_to_kobo` tool
+6. If your client shows a per-chat toggle for which connectors/tools are
+   active, make sure "Send to Kobo" is turned on for the conversation you
+   want to use it in
+
+### 5.6 — Test it
+
+In any chat, ask something like *"send this conversation to my Kobo"* or
+*"turn this into an EPUB and send it to Kobo."* Claude will call the tool
+and reply with a confirmation and the Drive link. Check the Kobo folder in
+Google Drive (or your Kobo device, after its next sync) to confirm the
+EPUB landed.
+
+Note: like the main service, this one is on Render's free tier and sleeps
+after 15 minutes of inactivity — the first call after a while may take
+~20–30 seconds to respond. That's normal, not a failure.
 
 ---
 
