@@ -70,6 +70,29 @@ When the user says any of these, run the full workflow above:
 
 ---
 
+## "Send this chat to Kobo" — paste vs. describe
+
+If the user wants to send a **claude.ai** conversation (not a Claude Code
+session) to Kobo, I have no way to fetch it myself — claude.ai share links
+are client-rendered, so a plain fetch returns an empty page (verified: the
+extracted content was just an empty React root div, no title, no text).
+There is also no API access from a Claude Code session into claude.ai's own
+chat history.
+
+So:
+- **Pasted text** → build the EPUB from exactly that text. This is the only
+  way to send the *actual* content of an existing claude.ai chat.
+- **A description of a chat** ("the one where we discussed X") → do NOT
+  reconstruct or approximate it from the description. That produces new
+  invented content, not the real conversation. Say so explicitly and ask
+  the user to paste the actual text instead, or offer to write fresh
+  content on the topic if that's what they actually want.
+- **A Claude Code session** (this kind of session) is different — its
+  transcript is a real local file, so `export_conversation.py` can pull the
+  actual content directly, no pasting needed.
+
+---
+
 ## Fetching web content
 
 Use the `WebFetch` tool (load via ToolSearch if needed) to retrieve URLs.
