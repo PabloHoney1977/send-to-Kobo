@@ -148,6 +148,7 @@ li { margin: 0.2em 0; }
 hr { border: none; border-top: 1px solid #ddd; margin: 1em 0; }
 strong { font-weight: bold; }
 em     { font-style: italic; }
+a      { color: inherit; text-decoration: underline; }
 """
 
 

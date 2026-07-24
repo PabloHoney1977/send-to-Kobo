@@ -35,6 +35,7 @@ ul,ol{margin:.5em 0;padding-left:1.5em}
 li{margin:.2em 0}
 hr{border:none;border-top:1px solid #ddd;margin:1em 0}
 strong{font-weight:bold}em{font-style:italic}
+a{color:inherit;text-decoration:underline}
 img{max-width:100%;height:auto;display:block;margin:1em auto}
 """
 

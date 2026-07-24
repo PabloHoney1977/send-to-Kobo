@@ -81,7 +81,7 @@ blockquote {
 }
 figure { margin: 1em 0; }
 figcaption { font-size: 0.85em; color: #666; text-align: center; }
-a { color: #1a0dab; }
+a { color: inherit; text-decoration: underline; }
 pre, code {
     font-family: "Courier New", monospace;
     font-size: 0.85em;
